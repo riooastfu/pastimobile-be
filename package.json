@@ -12,7 +12,9 @@
   "author": "Tim Pengembang PAS <email@pasifikagrosentosa.com>",
   "license": "ISC",
   "dependencies": {
+    "@tensorflow/tfjs": "^4.22.0",
     "@tensorflow/tfjs-node": "^4.22.0",
+    "@vladmandic/face-api": "^1.7.15",
     "bcrypt": "^5.1.0",
     "canvas": "^3.1.0",
     "cors": "^2.8.5",
@@ -21,14 +23,17 @@
     "express": "^4.18.2",
     "express-validator": "^7.0.1",
     "face-api.js": "^0.22.2",
+    "jimp": "^1.6.0",
     "jsonwebtoken": "^9.0.0",
     "moment-timezone": "^0.5.48",
     "multer": "^1.4.5-lts.1",
     "mysql2": "^3.2.0",
+    "node-cache": "^5.1.2",
     "object-hash": "^3.0.0",
     "sequelize": "^6.29.3",
     "sharp": "^0.34.1",
     "tedious": "^14.7.0",
+    "uuid": "^11.1.0",
     "zod": "^3.24.3"
   },
   "devDependencies": {

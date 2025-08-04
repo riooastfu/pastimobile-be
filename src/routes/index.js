@@ -6,6 +6,7 @@ import { checkPasswordExpiration, checkRole, verifyToken } from '../middleware/m
 import homeRouter from './homeRouter.js';
 import aktivitasRouter from './aktivitasRouter.js';
 import profileRouter from './profileRouter.js';
+import faceRecognitionRouter from './faceRecognitionRouter.js';
 
 const rootRouter = express.Router();
 
@@ -15,5 +16,6 @@ rootRouter.use('/cuti', [verifyToken, checkPasswordExpiration], cutiRouter);
 rootRouter.use('/absensi', [verifyToken, checkPasswordExpiration], absensiRouter);
 rootRouter.use('/aktivitas', [verifyToken, checkPasswordExpiration], aktivitasRouter);
 rootRouter.use('/profile', [verifyToken, checkPasswordExpiration], profileRouter);
+rootRouter.use('/face', [verifyToken, checkPasswordExpiration], faceRecognitionRouter);
 
 export default rootRouter;

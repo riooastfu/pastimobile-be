@@ -3,6 +3,9 @@ import PersDataKaryawan from "../model/PersDataKaryawan.js";
 import PersDepartemen from "../model/PersDepartemen.js";
 import { findBirthdaysInWeek } from "../lib/birthday.js";
 import MobileVersion from "../model/MobileVersion.js";
+import { PredictAllAgeAndGenderWithFaceAlignmentTask } from "face-api.js/build/commonjs/globalApi/PredictAgeAndGenderTask.js";
+
+PredictAllAgeAndGenderWithFaceAlignmentTask
 
 export const getKaryawanUlangTahun = async (req, res, next) => {
     try {
@@ -21,8 +24,10 @@ export const getKaryawanUlangTahun = async (req, res, next) => {
             }],
             where: {
                 perusahaan: pt,
-                tanggal_keluar: '0000-00-00',
-                [Op.and]: Sequelize.where(Sequelize.fn('MONTH', Sequelize.col('tanggal_lahir')), Sequelize.fn('MONTH', Sequelize.fn('NOW')))
+                [Op.and]: [
+                    Sequelize.where(Sequelize.fn('MONTH', Sequelize.col('tanggal_lahir')), Sequelize.fn('MONTH', Sequelize.fn('NOW'))),
+                    Sequelize.literal("tanggal_keluar = '0000-00-00'")
+                ]
             },
             order: [
                 [Sequelize.fn('DAY', Sequelize.col('tanggal_lahir')), 'ASC']
@@ -43,7 +48,6 @@ export const getKaryawanUlangTahun = async (req, res, next) => {
         next(error);
     }
 }
-
 
 export const getAppVersion = async (req, res, next) => {
     try {

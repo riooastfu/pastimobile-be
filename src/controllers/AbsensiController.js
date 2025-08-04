@@ -1,16 +1,137 @@
-import { AppError } from '../utils/errorHandler.js'; // Sesuaikan path jika perlu
+// controllers/AbsensiController.js (Enhanced Version)
+import { AppError } from '../utils/errorHandler.js';
 import AttLog from '../model/AttLog.js';
-import { col, fn, QueryTypes } from 'sequelize';
+import { col, fn, QueryTypes, where } from 'sequelize';
 import AuthRoleHt from '../model/AuthRoleHt.js';
 import MasterLokasiAbsen from '../model/MasterLokasiAbsen.js';
 import moment from 'moment-timezone';
 import { absenCheckSchema, validateImageFile } from '../schema/AbsensiSchema.js';
-import AuthMaps from '../model/AuthMaps.js';
 import { ensureUploadsDirectory } from '../config/image.js';
 import path from 'path';
 import sharp from 'sharp';
+import FaceRecognitionService from '../services/faceRecognitionService.js';
+import { Op } from 'sequelize';
+import { Jimp } from 'jimp';
 
-export const absenCheckIn = async (req, res, next) => { // Tambahkan 'next'
+export const absenCheckInFace = async (req, res, next) => {
+    try {
+        await ensureUploadsDirectory();
+
+        const file = validateImageFile(req.file);
+
+        const validationResult = absenCheckSchema.safeParse(req.body);
+
+        if (!validationResult.success) {
+            const formattedErrors = validationResult.error.flatten().fieldErrors;
+            return next(
+                new AppError(
+                    "Data input tidak valid.",
+                    400,
+                    "VALIDATION_ERROR",
+                    formattedErrors
+                )
+            );
+        }
+
+        const validatedData = validationResult.data;
+
+        // Face recognition verification - REQUIRED for all check-ins
+        const faceResult = await FaceRecognitionService.verifyFace(
+            file.buffer,
+            validatedData.pin,
+            validatedData.threshold
+        );
+
+        // If face verification fails, return error immediately - NO database insertion
+        if (!faceResult.isMatch) {
+            return res.status(401).json({
+                status: 'fail',
+                message: faceResult.message,
+                data: {
+                    isMatch: faceResult.isMatch,
+                    confidence: faceResult.confidence,
+                    distance: faceResult.distance,
+                    threshold: faceResult.threshold,
+                    pin: validatedData.pin
+                }
+            });
+        }
+
+        // Time synchronization check
+        const timeServer = new Date();
+        const timeDevice = new Date(validatedData.scan_date);
+        const timeDiff = Math.abs(timeServer - timeDevice);
+
+        if (timeDiff > 120000) {
+            return next(new AppError('Waktu server dan perangkat tidak sinkron.', 400, 'TIME_MISMATCH'));
+        }
+
+        // Image processing and compression
+        const originalNameParts = file.originalname.split('.');
+        const extension = originalNameParts.length > 1 ? `.${originalNameParts.pop()}` : '.jpg';
+        const baseFilename = originalNameParts.join('.');
+        const compressedFilename = `${moment(validatedData.scan_date).format('DDMMYYYYHHmmss')}-${baseFilename}${extension}`;
+        const compressedPath = path.join('public', 'uploads', compressedFilename);
+
+        await sharp(file.buffer)
+            .resize({ width: 1000 })
+            .jpeg({ quality: 75, mozjpeg: true })
+            .png({ compressionLevel: 8, quality: 75 })
+            .toFile(compressedPath);
+
+        const imageUrl = `${req.protocol}://${req.get("host")}/uploads/${compressedFilename}`;
+
+        // Prepare data for database insertion
+        const dataToCreate = {
+            pin: validatedData.pin,
+            coordinate: validatedData.coordinate,
+            image: imageUrl,
+            sn: 'Mobile',
+            scan_date: moment(validatedData.scan_date).format('YYYY-MM-DD HH:mm:ss'),
+            verifymode: '15', // Face recognition verify mode
+            inoutmode: '1',
+            att_id: moment(validatedData.scan_date).format('DDMMYYYYHHmmss') + "MOBILE" + validatedData.pin,
+        };
+
+        // Database insertion
+        const sql = `INSERT INTO att_log (sn, scan_date, pin, verifymode, inoutmode, reserved, work_code, att_id, coordinate, image)
+             VALUES (:sn, :scan_date, :pin, :verifymode, :inoutmode, '', '', :att_id, :coordinate, :image)`;
+
+        const replacements = {
+            sn: dataToCreate.sn,
+            scan_date: dataToCreate.scan_date,
+            pin: dataToCreate.pin,
+            verifymode: dataToCreate.verifymode,
+            inoutmode: dataToCreate.inoutmode,
+            att_id: dataToCreate.att_id,
+            coordinate: JSON.parse(dataToCreate.coordinate),
+            image: dataToCreate.image
+        };
+
+        const [affectedRows] = await AttLog.sequelize.query(sql, {
+            replacements: replacements,
+            type: QueryTypes.INSERT
+        });
+
+        // Success response - includes face verification details
+        const responseData = {
+            ...dataToCreate,
+            face_verification: {
+                isMatch: true,
+                confidence: faceResult.confidence,
+                distance: faceResult.distance,
+                threshold: validatedData.threshold
+            }
+        };
+
+        res.created(responseData, "Berhasil Check-in.");
+
+    } catch (error) {
+        next(error);
+    }
+};
+
+export const absenCheckIn = async (req, res, next) => {
     try {
         await ensureUploadsDirectory();
 
@@ -34,33 +155,44 @@ export const absenCheckIn = async (req, res, next) => { // Tambahkan 'next'
 
         const timeServer = new Date();
         const timeDevice = new Date(validatedData.scan_date);
+        const timeDiff = Math.abs(timeServer - timeDevice);
 
-        const timeDiff = Math.abs(timeServer - timeDevice); // Difference in milliseconds
-
-        if (timeDiff > 120000) { // 2 minutes in milliseconds
+        if (timeDiff > 120000) {
             return next(new AppError('Waktu server dan perangkat tidak sinkron.', 400, 'TIME_MISMATCH'));
         }
 
         const originalNameParts = file.originalname.split('.');
-        const extension = originalNameParts.length > 1 ? `.${originalNameParts.pop()}` : '.jpg'; // Default to jpg if no extension
+        const extension = originalNameParts.length > 1 ? `.${originalNameParts.pop()}` : '.jpg';
         const baseFilename = originalNameParts.join('.');
-        const compressedFilename = `${moment(validatedData.scan_date).format('DDMMYYYYHHmmss')}-${baseFilename}${extension}`; // Use a descriptive name
-        const compressedPath = path.join('public', 'uploads', compressedFilename); // Full path to save
+        const baseCompressedName = `${moment(validatedData.scan_date).format('DDMMYYYYHHmmss')}-${baseFilename}`;
 
-        await sharp(file.buffer) // Process the buffer directly
-            .resize({ width: 1000 }) // Optional: Resize
-            .jpeg({ quality: 75, mozjpeg: true }) // Compress JPEG
-            .png({ compressionLevel: 8, quality: 75 }) // Compress PNG
-            .toFile(compressedPath); // Save the compressed image to disk
+        let finalFilename = `${baseCompressedName}.jpg`;
+        let finalFilePath = path.join('public', 'uploads', finalFilename);
 
-        const imageUrl = `${req.protocol}://${req.get("host")}/uploads/${compressedFilename}`;
+        try {
+            const image = await Jimp.read(file.buffer);
+
+            if (image.getWidth() > 1000) {
+                image.resize(1000, Jimp.AUTO);
+            }
+
+            image.quality(75);
+            await image.writeAsync(finalFilePath);
+        } catch (jimpError) {
+
+            finalFilename = `${baseCompressedName}${extension}`;
+            finalFilePath = path.join('public', 'uploads', finalFilename);
+            fs.writeFileSync(finalFilePath, file.buffer);
+        }
+
+        const imageUrl = `${req.protocol}://${req.get("host")}/uploads/${finalFilename}`;
 
         const dataToCreate = {
             ...validatedData,
             image: imageUrl,
             sn: 'Mobile',
             scan_date: moment(validatedData.scan_date).format('YYYY-MM-DD HH:mm:ss'),
-            verifymode: '20',
+            verifymode: '5',
             inoutmode: '1',
             att_id: moment(validatedData.scan_date).format('DDMMYYYYHHmmss') + "MOBILE" + validatedData.pin,
         };
@@ -70,12 +202,12 @@ export const absenCheckIn = async (req, res, next) => { // Tambahkan 'next'
 
         const replacements = {
             sn: dataToCreate.sn,
-            scan_date: dataToCreate.scan_date, // String tanggal lokal Anda aman di sini
+            scan_date: dataToCreate.scan_date,
             pin: dataToCreate.pin,
             verifymode: dataToCreate.verifymode,
             inoutmode: dataToCreate.inoutmode,
             att_id: dataToCreate.att_id,
-            coordinate: dataToCreate.coordinate,
+            coordinate: JSON.parse(dataToCreate.coordinate),
             image: dataToCreate.image
         };
 
@@ -91,7 +223,7 @@ export const absenCheckIn = async (req, res, next) => { // Tambahkan 'next'
     }
 };
 
-export const absenCheckOut = async (req, res, next) => { // Tambahkan 'next'
+export const absenCheckOut = async (req, res, next) => {
     try {
         await ensureUploadsDirectory();
 
@@ -116,23 +248,23 @@ export const absenCheckOut = async (req, res, next) => { // Tambahkan 'next'
         const timeServer = new Date();
         const timeDevice = new Date(validatedData.scan_date);
 
-        const timeDiff = Math.abs(timeServer - timeDevice); // Difference in milliseconds
+        const timeDiff = Math.abs(timeServer - timeDevice);
 
-        if (timeDiff > 120000) { // 2 minutes in milliseconds
+        if (timeDiff > 120000) {
             return next(new AppError('Waktu server dan perangkat tidak sinkron.', 400, 'TIME_MISMATCH'));
         }
 
         const originalNameParts = file.originalname.split('.');
-        const extension = originalNameParts.length > 1 ? `.${originalNameParts.pop()}` : '.jpg'; // Default to jpg if no extension
+        const extension = originalNameParts.length > 1 ? `.${originalNameParts.pop()}` : '.jpg';
         const baseFilename = originalNameParts.join('.');
-        const compressedFilename = `${moment(timeDevice).format('DDMMYYYYHHmmss')}-${baseFilename}${extension}`; // Use a descriptive name
-        const compressedPath = path.join('public', 'uploads', compressedFilename); // Full path to save
+        const compressedFilename = `${moment(timeDevice).format('DDMMYYYYHHmmss')}-${baseFilename}${extension}`;
+        const compressedPath = path.join('public', 'uploads', compressedFilename);
 
-        await sharp(file.buffer) // Process the buffer directly
-            .resize({ width: 1000 }) // Optional: Resize
-            .jpeg({ quality: 75, mozjpeg: true }) // Compress JPEG
-            .png({ compressionLevel: 8, quality: 75 }) // Compress PNG
-            .toFile(compressedPath); // Save the compressed image to disk
+        await sharp(file.buffer)
+            .resize({ width: 1000 })
+            .jpeg({ quality: 75, mozjpeg: true })
+            .png({ compressionLevel: 8, quality: 75 })
+            .toFile(compressedPath);
 
         const imageUrl = `${req.protocol}://${req.get("host")}/uploads/${compressedFilename}`;
 
@@ -141,7 +273,7 @@ export const absenCheckOut = async (req, res, next) => { // Tambahkan 'next'
             image: imageUrl,
             sn: 'Mobile',
             scan_date: moment(validatedData.scan_date).format('YYYY-MM-DD HH:mm:ss'),
-            verifymode: '20',
+            verifymode: '5',
             inoutmode: '0',
             att_id: moment(validatedData.scan_date).format('DDMMYYYYHHmmss') + "MOBILE" + validatedData.pin,
         };
@@ -156,7 +288,7 @@ export const absenCheckOut = async (req, res, next) => { // Tambahkan 'next'
             verifymode: dataToCreate.verifymode,
             inoutmode: dataToCreate.inoutmode,
             att_id: dataToCreate.att_id,
-            coordinate: dataToCreate.coordinate,
+            coordinate: JSON.parse(dataToCreate.coordinate),
             image: dataToCreate.image
         };
 
@@ -165,7 +297,7 @@ export const absenCheckOut = async (req, res, next) => { // Tambahkan 'next'
             type: QueryTypes.INSERT
         });
 
-        res.created(dataToCreate, "Berhasil Check-in.");
+        res.created(dataToCreate, "Berhasil Check-out.");
 
     } catch (error) {
         next(error);
@@ -175,25 +307,29 @@ export const absenCheckOut = async (req, res, next) => { // Tambahkan 'next'
 /**
  * Mengambil riwayat absen (9 hari terakhir) untuk NIP tertentu.
  */
-export const getDataAbsenUser = async (req, res, next) => { // Tambahkan next
+export const getDataAbsenUser = async (req, res, next) => {
     try {
         const { pin } = req.params;
 
-        // --- Validasi Input Dasar ---
         if (!pin) {
             return next(new AppError('PIN absen Pegawai dibutuhkan.', 400, 'MISSING_PARAMETER'));
         }
 
-        // --- Query menggunakan Sequelize ORM ---
+        // Get current month and year
+        const currentDate = new Date();
+        const currentYear = currentDate.getFullYear();
+        const currentMonth = currentDate.getMonth() + 1; // getMonth() returns 0-11
+
         const dataAbsen = await AttLog.findAll({
             where: {
-                pin
+                pin,
+                [Op.and]: [
+                    where(fn('YEAR', col('att_log.scan_date')), currentYear),
+                    where(fn('MONTH', col('att_log.scan_date')), currentMonth)
+                ]
             },
             attributes: [
-                // Pilih kolom dari AttLog dan aliasnya
                 'pin',
-                // Gunakan sequelize.fn dan sequelize.col untuk fungsi SQL
-                // Penting: Kualifikasi nama kolom dengan nama tabel jika ambigu (misal: 'att_log.scan_date')
                 [fn('DATE', col('att_log.scan_date')), 'tgl_masuk'],
                 [fn('MIN', fn('TIME', col('att_log.scan_date'))), 'jam_masuk'],
                 [fn('MAX', fn('TIME', col('att_log.scan_date'))), 'jam_pulang'],
@@ -202,23 +338,15 @@ export const getDataAbsenUser = async (req, res, next) => { // Tambahkan next
                 fn('DATE', col('att_log.scan_date')),
                 'pin',
             ],
-            // Urutkan berdasarkan tanggal (hasil fungsi DATE) secara descending
             order: [
                 [fn('DATE', col('att_log.scan_date')), 'DESC']
-            ],
-            limit: 10, // Ambil 9 data hari terakhir
-            // subQuery: false // Terkadang diperlukan untuk query LIMIT/OFFSET dengan include/grouping kompleks
-            // raw: true, // Bisa ditambahkan jika hanya butuh plain object, bukan instance Sequelize
-            // nest: true // Jika raw: true, ini akan mengelompokkan hasil include
+            ]
         });
 
-        // --- Response Sukses ---
-        // dataAbsen akan berupa array, bisa kosong jika NIP tidak ada atau tidak punya log
         res.success(dataAbsen, 'Data absensi berhasil diambil.');
 
     } catch (error) {
-        // --- Penanganan Error ---
-        next(error); // Teruskan ke globalErrorHandler
+        next(error);
     }
 };
 
@@ -244,4 +372,4 @@ export const getRadiusAbsenByRole = async (req, res, next) => {
     } catch (error) {
         next(error);
     }
-}
+};

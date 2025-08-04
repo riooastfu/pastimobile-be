@@ -77,7 +77,7 @@ export const Login = async (req, res, next) => {
                     ]
                 }
             ],
-            attributes: ['namauser', 'password', 'karyawanid', 'status']
+            attributes: ['namauser', 'password', 'karyawanid', 'status', 'password_changed_at'],
         });
 
         const hashPassword = crypto.createHash('md5').update(password).digest('hex');
@@ -105,7 +105,6 @@ export const Login = async (req, res, next) => {
 
         const isPasswordExpired = !foundUser.password_changed_at ||
             new Date(foundUser.password_changed_at) < threeMonthsAgo;
-
 
         // Payload untuk token
         const payload = {
@@ -137,12 +136,13 @@ export const Login = async (req, res, next) => {
             golongan: foundUser.pers_datakaryawan?.golongan
         };
 
+        console.log("Berhasil")
         // Kirim tokens dan data user
         res.success(
             {
                 accessToken,
                 refreshToken,
-                user: userDataForResponse
+                user: userDataForResponse,
             },
             isPasswordExpired
                 ? 'Login berhasil. Password Anda telah kedaluwarsa, mohon perbarui segera.'
