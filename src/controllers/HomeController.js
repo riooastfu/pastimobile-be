@@ -15,6 +15,9 @@ export const getKaryawanUlangTahun = async (req, res, next) => {
             return next(new AppError('PT karyawan dibutuhkan pada parameter URL.', 400, 'MISSING_PARAMETER'));
         }
 
+        const today = new Date();
+        const nextWeek = new Date(today.getTime() + 7 * 24 * 60 * 60 * 1000);
+
         const karyawan = await PersDataKaryawan.findAll({
             attributes: ['nama_karyawan', 'tanggal_lahir'],
             include: [{
@@ -25,7 +28,15 @@ export const getKaryawanUlangTahun = async (req, res, next) => {
             where: {
                 perusahaan: pt,
                 [Op.and]: [
-                    Sequelize.where(Sequelize.fn('MONTH', Sequelize.col('tanggal_lahir')), Sequelize.fn('MONTH', Sequelize.fn('NOW'))),
+                    Sequelize.where(
+                        Sequelize.fn('DATE_FORMAT', Sequelize.col('tanggal_lahir'), '%m-%d'),
+                        {
+                            [Op.between]: [
+                                today.toISOString().slice(5, 10),
+                                nextWeek.toISOString().slice(5, 10)
+                            ]
+                        }
+                    ),
                     Sequelize.literal("tanggal_keluar = '0000-00-00'")
                 ]
             },
@@ -40,10 +51,7 @@ export const getKaryawanUlangTahun = async (req, res, next) => {
             departemen_desc: item.pers_departemen.desc
         }));
 
-        if (restrukturData) { // Gunakan processedData
-            const ulangTahun = findBirthdaysInWeek(restrukturData); // Sesuaikan jika findBirthdaysThisWeek perlu data mentah
-            res.success(ulangTahun, 'Data ulang tahun berhasil diambil.');
-        }
+        res.success(restrukturData, 'Data ulang tahun berhasil diambil.');
     } catch (error) {
         next(error);
     }

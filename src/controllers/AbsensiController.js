@@ -2,6 +2,7 @@
 import { AppError } from '../utils/errorHandler.js';
 import AttLog from '../model/AttLog.js';
 import { col, fn, QueryTypes, where } from 'sequelize';
+import AuthMaps from '../model/AuthMaps.js';
 import AuthRoleHt from '../model/AuthRoleHt.js';
 import MasterLokasiAbsen from '../model/MasterLokasiAbsen.js';
 import moment from 'moment-timezone';
@@ -144,7 +145,7 @@ export const absenCheckIn = async (req, res, next) => {
             return next(
                 new AppError(
                     "Data input tidak valid.",
-                    400,
+                    422,
                     "VALIDATION_ERROR",
                     formattedErrors
                 )
@@ -155,6 +156,7 @@ export const absenCheckIn = async (req, res, next) => {
 
         const timeServer = new Date();
         const timeDevice = new Date(validatedData.scan_date);
+
         const timeDiff = Math.abs(timeServer - timeDevice);
 
         if (timeDiff > 120000) {
@@ -164,28 +166,16 @@ export const absenCheckIn = async (req, res, next) => {
         const originalNameParts = file.originalname.split('.');
         const extension = originalNameParts.length > 1 ? `.${originalNameParts.pop()}` : '.jpg';
         const baseFilename = originalNameParts.join('.');
-        const baseCompressedName = `${moment(validatedData.scan_date).format('DDMMYYYYHHmmss')}-${baseFilename}`;
+        const compressedFilename = `${moment(timeDevice).format('DDMMYYYYHHmmss')}-${baseFilename}${extension}`;
+        const compressedPath = path.join('public', 'uploads', compressedFilename);
 
-        let finalFilename = `${baseCompressedName}.jpg`;
-        let finalFilePath = path.join('public', 'uploads', finalFilename);
+        await sharp(file.buffer)
+            .resize({ width: 1000 })
+            .jpeg({ quality: 75, mozjpeg: true })
+            .png({ compressionLevel: 8, quality: 75 })
+            .toFile(compressedPath);
 
-        try {
-            const image = await Jimp.read(file.buffer);
-
-            if (image.getWidth() > 1000) {
-                image.resize(1000, Jimp.AUTO);
-            }
-
-            image.quality(75);
-            await image.writeAsync(finalFilePath);
-        } catch (jimpError) {
-
-            finalFilename = `${baseCompressedName}${extension}`;
-            finalFilePath = path.join('public', 'uploads', finalFilename);
-            fs.writeFileSync(finalFilePath, file.buffer);
-        }
-
-        const imageUrl = `${req.protocol}://${req.get("host")}/uploads/${finalFilename}`;
+        const imageUrl = `${req.protocol}://${req.get("host")}/uploads/${compressedFilename}`;
 
         const dataToCreate = {
             ...validatedData,
@@ -216,7 +206,7 @@ export const absenCheckIn = async (req, res, next) => {
             type: QueryTypes.INSERT
         });
 
-        res.created(dataToCreate, "Berhasil Check-in.");
+        res.created(dataToCreate, "Berhasil Check-out.");
 
     } catch (error) {
         next(error);
