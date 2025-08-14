@@ -15,12 +15,14 @@ export const db = new Sequelize('portal_prd', 'root', '', {
         },
     },
     timezone: '+07:00',
+    logging: false
 })
 
 export const db_finpro = new Sequelize('fin_pro', 'root', '', {
     host: "localhost",
     dialect: "mysql",
-    timezone: '+07:00'
+    timezone: '+07:00',
+    logging: false,
 })
 
 export const db_cusg = new Sequelize('CUSG', 'portaldb', 'pas7892020', {

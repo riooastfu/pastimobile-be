@@ -1,6 +1,6 @@
 import express from 'express';
-import { createLogUserLogin, Login, Logout, refreshAccessToken, resetPassword } from '../controllers/AuthController.js';
-import { verifyRefreshToken } from '../middleware/middleware.js';
+import { createLogUserLogin, Login, Logout, refreshAccessToken, resetPassword, registerFCMToken } from '../controllers/AuthController.js';
+import { verifyRefreshToken, verifyToken } from '../middleware/middleware.js';
 
 const authRouter = express.Router();
 
@@ -9,5 +9,6 @@ authRouter.post('/refresh-token', [verifyRefreshToken], refreshAccessToken);
 authRouter.post('/logout', Logout);
 authRouter.post('/password/reset', resetPassword);
 authRouter.post('/login/log', createLogUserLogin);
+authRouter.post('/register-fcm-token', [verifyToken], registerFCMToken);
 
 export default authRouter;

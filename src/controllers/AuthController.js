@@ -13,6 +13,7 @@ import { Op, QueryTypes } from 'sequelize';
 import AuthRoleHt from '../model/AuthRoleHt.js';
 import { passwordValidation } from '../lib/password-validation.js';
 import UserLog from '../model/UserLog.js';
+import FcmToken from '../model/FcmToken.js';
 
 // Fungsi untuk membuat access token
 const generateAccessToken = (payload) => {
@@ -310,4 +311,43 @@ export const createLogUserLogin = async (req, res, next) => {
     } catch (error) {
         next(error)
     }
-}
+};
+
+export const registerFCMToken = async (req, res, next) => {
+    try {
+        const { fcmToken, deviceId, platform } = req.body;
+        const userId = req.user.id;
+
+        // Check if token already exists and is active
+        const existingToken = await FcmToken.findOne({
+            where: {
+                karyawanid: userId,
+                token: fcmToken,
+                is_active: true
+            }
+        });
+
+        if (existingToken) {
+            return res.success({}, 'FCM token sudah terdaftar');
+        }
+
+        // Deactivate old tokens for this user
+        await FcmToken.update(
+            { is_active: false },
+            { where: { karyawanid: userId } }
+        );
+
+        // Create new token
+        await FcmToken.create({
+            karyawanid: userId,
+            token: fcmToken,
+            device_id: deviceId,
+            platform: platform,
+            is_active: true
+        });
+
+        res.success({}, 'FCM token berhasil didaftarkan');
+    } catch (error) {
+        next(error);
+    }
+};
